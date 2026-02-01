@@ -82,6 +82,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.createFileInputVisible = true
 			return m, nil
 		case "enter":
+			if m.currentFile != nil {
+				break
+			}
 
 			// todo: create a file
 			fileName := fmt.Sprintf("%s.md", m.newFileInput.Value())

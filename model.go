@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -79,6 +80,15 @@ func InitialModel() model {
 		Background(lipgloss.Color("254")).
 		Padding(0, 1)
 
+	finalList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("ctrl+d"),
+				key.WithHelp("ctrl+d", "delete file"),
+			),
+		}
+	}
+
 	return model{
 		style:                  DefaultStyles(),
 		newFileInput:           ti,
@@ -100,6 +110,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+q":
 			return m, tea.Quit
+		case "ctrl+d":
+			if m.showinglist {
+				item, ok := m.list.SelectedItem().(item)
+				if ok {
+					filePath := filepath.Join(vaultDir, item.title)
+
+					// remove the file
+					if err := os.Remove(filePath); err != nil {
+						log.Printf("Error deleting file: %v", err)
+					}
+
+					m.list.SetItems(listFiles())
+				}
+			}
+			return m, nil
 		case "esc":
 			// list and filter state  to main UI
 			if m.showinglist {
@@ -157,9 +182,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			fname := m.newFileInput.Value()
 			// todo: create a file
-			fileName := fmt.Sprintf("%s.md", m.newFileInput.Value())
-			if fileName != "" {
+			if fname != "" {
+				fileName := fmt.Sprintf("%s.md", fname)
 				filePath := filepath.Join(vaultDir, fileName)
 
 				// if not exists, create a file

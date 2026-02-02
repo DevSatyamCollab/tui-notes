@@ -86,6 +86,10 @@ func InitialModel() model {
 				key.WithKeys("ctrl+d"),
 				key.WithHelp("ctrl+d", "delete file"),
 			),
+			key.NewBinding(
+				key.WithKeys("ctrl+r"),
+				key.WithHelp("ctrl+r", "rename file"),
+			),
 		}
 	}
 
@@ -110,6 +114,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+q":
 			return m, tea.Quit
+		case "ctrl+r":
+			if m.showinglist {
+				item, ok := m.list.SelectedItem().(item)
+				if ok {
+					filePath := filepath.Join(vaultDir, item.title)
+					f, err := os.Open(filePath)
+					if err != nil {
+						log.Printf("Can not open the file: %v", err)
+					}
+
+					m.currentFile = f
+					m.createFileInputVisible = true
+					m.showinglist = false
+					m.newFileInput.SetValue("")
+
+				}
+			}
+
+			return m, nil
 		case "ctrl+d":
 			if m.showinglist {
 				item, ok := m.list.SelectedItem().(item)
@@ -151,10 +174,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.createFileInputVisible = true
 			return m, nil
 		case "enter":
+			// rename
+			if m.newFileInput.Value() != "" && m.currentFile != nil {
+				newName := m.newFileInput.Value() + ".md"
+				oldPath := m.currentFile.Name()
+				newPath := filepath.Join(vaultDir, newName)
+
+				err := os.Rename(oldPath, newPath)
+				if err != nil {
+					log.Printf("Error can't rename %s file: %v", m.currentFile.Name(), err)
+				}
+
+				defer m.currentFile.Close()
+				m.newFileInput.SetValue("")
+				m.currentFile = nil
+				m.createFileInputVisible = false
+				m.showinglist = true
+				m.list.SetItems(listFiles())
+
+				return m, nil
+			}
+
+			// noteTextArea
 			if m.currentFile != nil {
 				break
 			}
 
+			// list
 			if m.showinglist {
 				item, ok := m.list.SelectedItem().(item)
 				if ok {
@@ -243,12 +289,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.createFileInputVisible {
-		m.newFileInput, cmd = m.newFileInput.Update(msg)
+	if m.currentFile != nil && m.newFileInput.Value() == "" {
+		m.noteTextArea, cmd = m.noteTextArea.Update(msg)
 	}
 
-	if m.currentFile != nil {
-		m.noteTextArea, cmd = m.noteTextArea.Update(msg)
+	if m.createFileInputVisible {
+		m.newFileInput, cmd = m.newFileInput.Update(msg)
 	}
 
 	if m.showinglist {
@@ -269,7 +315,7 @@ func (m model) View() string {
 		view = m.newFileInput.View()
 	}
 
-	if m.currentFile != nil {
+	if m.currentFile != nil && !m.createFileInputVisible {
 		view = m.noteTextArea.View()
 	}
 

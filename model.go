@@ -5,7 +5,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +17,7 @@ import (
 var (
 	vaultDir    string
 	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	docStyle    = lipgloss.NewStyle().Margin(1, 2)
 )
 
 func init() {
@@ -26,15 +29,23 @@ func init() {
 	vaultDir = filepath.Join(homeDir, ".note-takingApp")
 }
 
+type item struct {
+	title, desc string
+}
+
+func (i item) Title() string       { return i.title }
+func (i item) Description() string { return i.desc }
+func (i item) FilterValue() string { return i.title }
+
 // model
 type model struct {
-	height                 int
-	width                  int
 	newFileInput           textinput.Model
 	noteTextArea           textarea.Model
 	createFileInputVisible bool
 	style                  *StyleBundle
 	currentFile            *os.File
+	list                   list.Model
+	showinglist            bool
 }
 
 func InitialModel() model {
@@ -58,10 +69,21 @@ func InitialModel() model {
 	ta.Placeholder = "Write your note here..."
 	ta.Focus()
 
+	// list
+	notelist := listFiles()
+
+	finalList := list.New(notelist, list.NewDefaultDelegate(), 0, 0)
+	finalList.Title = "All notes 📋"
+	finalList.Styles.Title = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("16")).
+		Background(lipgloss.Color("254")).
+		Padding(0, 1)
+
 	return model{
 		style:                  DefaultStyles(),
 		newFileInput:           ti,
 		noteTextArea:           ta,
+		list:                   finalList,
 		createFileInputVisible: false,
 	}
 }
@@ -71,19 +93,68 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.height = msg.Height
-		m.width = msg.Width
+		h, v := docStyle.GetFrameSize()
+		m.list.SetSize(msg.Width-h, msg.Height-v-5)
 
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+q":
 			return m, tea.Quit
+		case "esc":
+			// list and filter state  to main UI
+			if m.showinglist {
+				if m.list.FilterState() == list.Filtering {
+					break
+				}
+
+				m.showinglist = false
+			}
+
+			// create a new file to main UI
+			if m.createFileInputVisible {
+				m.createFileInputVisible = false
+			}
+
+			// textarea to main UI
+			if m.currentFile != nil {
+				m.noteTextArea.SetValue("")
+				m.currentFile = nil
+			}
+
+			return m, nil
 		case "ctrl+n":
 			m.createFileInputVisible = true
 			return m, nil
 		case "enter":
 			if m.currentFile != nil {
 				break
+			}
+
+			if m.showinglist {
+				item, ok := m.list.SelectedItem().(item)
+				if ok {
+					filePath := filepath.Join(vaultDir, item.title)
+
+					content, err := os.ReadFile(filePath)
+					if err != nil {
+						log.Printf("Error reading the file: %v", err)
+						return m, nil
+					}
+
+					m.noteTextArea.SetValue(string(content))
+
+					// open the file
+					f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+					if err != nil {
+						log.Printf("Error reading the file: %v", err)
+						return m, nil
+					}
+
+					m.currentFile = f
+					m.showinglist = false
+
+					return m, nil
+				}
 			}
 
 			// todo: create a file
@@ -140,8 +211,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			return m, nil
 		case "ctrl+l":
-
-		case "Esc":
+			notelist := listFiles()
+			m.list.SetItems(notelist)
+			m.showinglist = true
 		}
 	}
 
@@ -153,27 +225,68 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.noteTextArea, cmd = m.noteTextArea.Update(msg)
 	}
 
+	if m.showinglist {
+		m.list, cmd = m.list.Update(msg)
+	}
+
 	return m, cmd
 }
 
 func (m model) View() string {
 
-	h := m.style.headerStyle.Render("Welcome to note-takingApp 📓")
-	f := m.style.footerStyle.Render(fmt.Sprintf(
-		"Ctrl+n: New file . Ctrl+l: list . Ctrl+s: save . Esc: back/save . Ctrl+q: Quit"))
+	header := m.style.headerStyle.Render("Welcome to note-takingApp 📓")
+	footer := m.style.footerStyle.Render(fmt.Sprintf(
+		"Ctrl+n: New file . Ctrl+l: list . Ctrl+s: save . Esc: back . Ctrl+q: Quit"))
 
-	v := ""
+	view := ""
 	if m.createFileInputVisible {
-		v = m.newFileInput.View()
+		view = m.newFileInput.View()
 	}
 
 	if m.currentFile != nil {
-		v = m.noteTextArea.View()
+		view = m.noteTextArea.View()
 	}
 
-	return fmt.Sprintf("\n%s\n\n%s\n\n%s\n", h, v, f)
+	if m.showinglist {
+		view = m.list.View()
+	}
+
+	return fmt.Sprintf("\n%s\n\n%s\n\n%s\n", header, view, footer)
 }
 
 func (m model) Init() tea.Cmd {
 	return textinput.Blink
+}
+
+func listFiles() []list.Item {
+	// 1. Load the specific timezone
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		// Fallback to local if Kolkata isn't found
+		loc = time.Local
+	}
+
+	items := make([]list.Item, 0)
+
+	entries, err := os.ReadDir(vaultDir)
+	if err != nil {
+		log.Fatal("Error reading notes")
+	}
+
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		modeTime := info.ModTime().In(loc).Format("2006-01-02 03:04 PM")
+
+		items = append(items, item{
+			title: info.Name(),
+			desc:  fmt.Sprintf("Modified: %s", modeTime),
+		})
+
+	}
+
+	return items
 }

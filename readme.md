@@ -59,7 +59,7 @@ Built with **Go** and the **Bubble Tea** (Charm.sh) framework.
 2. Build the binary
 
    ```bash
-   go build -o notes main.go
+   go build -o notes .
    ```
 
 3. (Optional) Move to your path:
